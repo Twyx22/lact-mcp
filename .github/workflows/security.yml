@@ -13,9 +13,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: anchore/sbom-action@v0
         with:
           path: ./
           format: spdx-json
           output-file: sbom.spdx.json
+          upload-release-assets: false # release.yml owns release assets (avoids race)
