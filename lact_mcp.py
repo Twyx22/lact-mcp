@@ -95,11 +95,11 @@ def t_gpu_stats(a):
 
 
 def t_power(a):
-    gid = a.get("gpu_id", "0")
     action = a.get("action", "get")
     if action == "get":
-        return with_gpu(gid, "power-limit", "get")
+        return with_gpu(a.get("gpu_id") or "0", "power-limit", "get")
     if action == "set":
+        gid = target_gpu(a, write=True)
         watts = a.get("watts")
         if watts is None:
             raise ValueError("power set requires 'watts'")
@@ -133,15 +133,46 @@ def t_auto_switch(a):
 
 
 def resolve_id(gpu_id):
-    """Short index -> full PCI ID (passthrough when already full)."""
+    """Index ('1'), PCI suffix ('0000:01:00.0') or full LACT ID -> full ID."""
     gid = str(gpu_id)
-    if ":" in gid:
+    devs = (sock_query("list_devices")["data"]) or []
+    ids = [d["id"] for d in devs if "id" in d]
+    if gid in ids:
         return gid
-    devs = sock_query("list_devices")
-    try:
-        return devs["data"][int(gid)]["id"]
-    except (IndexError, ValueError, KeyError, TypeError):
-        raise ValueError(f"unknown gpu index {gid!r}")
+    if ":" in gid:  # PCI fragment: unique suffix match
+        matches = [i for i in ids if i.endswith(gid)]
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            raise ValueError(f"ambiguous gpu {gid!r}: matches {matches}")
+    else:
+        try:
+            return devs[int(gid)]["id"]
+        except (IndexError, ValueError, KeyError, TypeError):
+            pass
+    raise ValueError(f"unknown gpu {gid!r} (see list_gpus)")
+
+
+def target_gpu(a, write):
+    """Reads default to GPU 0; writes refuse a default when >1 GPU exists
+    (too easy to hit the wrong card, e.g. the iGPU)."""
+    gid = a.get("gpu_id")
+    if gid is None or gid == "":
+        n = len((sock_query("list_devices")["data"]) or [])
+        if write and n > 1:
+            raise ValueError(
+                f"ambiguous: {n} GPUs, specify gpu_id explicitly "
+                f"(see list_gpus). Refusing to write to a default GPU.")
+        gid = "0"
+    return resolve_id(gid)
+
+
+def _daemon_err(r, hint=""):
+    text = json.dumps(r)
+    if "missing field" in text:
+        text += (" Hint: " + hint) if hint else \
+            " Hint: this command needs args (e.g. {\"id\": \"<gpu-id>\"})."
+    return text
 
 
 def confirmed_write(command, args):
@@ -149,10 +180,11 @@ def confirmed_write(command, args):
     confirm, lactd auto-reverts after ~5s (apply_settings_timer)."""
     r = sock_query(command, args)
     if r.get("status") != "ok":
-        raise RuntimeError(json.dumps(r)[:300])
+        raise RuntimeError(_daemon_err(
+            r, "socket write rejected; check the value against clocks get."))
     c = sock_query("confirm_pending_config", {"command": "confirm"})
     if c.get("status") != "ok":
-        raise RuntimeError(f"applied but confirm failed: {json.dumps(c)[:200]}")
+        raise RuntimeError(f"applied but confirm failed: {json.dumps(c)}")
     return r
 
 
@@ -184,21 +216,24 @@ def _fan_min_speed(gid):
 
 
 def t_fan(a):
-    gid = resolve_id(a.get("gpu_id", "0"))
     action = a.get("action", "get")
+    gid = target_gpu(a, write=(action != "get"))
     if action == "get":
         st = sock_query("device_stats", {"id": gid})
         if st.get("status") != "ok":
-            raise RuntimeError(json.dumps(st)[:300])
+            raise RuntimeError(_daemon_err(st))
         st = st["data"]["fan"]
         cfg = sock_query("get_gpu_config", {"id": gid})["data"] or {}
         f = cfg.get("fan_control_settings") or {}
         mode = st.get("control_mode",
                       "automatic" if not st.get("control_enabled") else "?")
+        note = ""
+        if st.get("pwm_max") is None and not st.get("control_enabled"):
+            note = " (no pwm range reported: fan control likely unsupported by this driver — e.g. NVIDIA proprietary)"
         return (f"mode: {mode} (enabled: {st.get('control_enabled')}), "
                 f"speed: {st.get('speed_current')} RPM "
                 f"(pwm {st.get('pwm_current')}), "
-                f"curve: {st.get('curve') or f.get('curve')}")
+                f"curve: {st.get('curve') or f.get('curve')}{note}")
     if action == "auto":
         confirmed_write("set_fan_control", {"id": gid, "enabled": False})
         return f"{gid}: fan back to automatic"
@@ -239,22 +274,24 @@ OFFSET_TYPES = (("gpu_offset", "gpu_offsets", "gpu_clock_offset"),
 
 
 def t_clocks(a):
-    gid = resolve_id(a.get("gpu_id", "0"))
     action = a.get("action", "get")
+    gid = target_gpu(a, write=(action != "get"))
     info = sock_query("device_clocks_info", {"id": gid})
     if info.get("status") != "ok":
-        raise RuntimeError(json.dumps(info)[:300])
+        raise RuntimeError(_daemon_err(info))
     table = info["data"]["table"]["value"]
     if action == "get":
         cfg = sock_query("get_gpu_config", {"id": gid})["data"] or {}
         cur = {k: cfg[k] for k in ("min_core_clock", "max_core_clock",
                "min_memory_clock", "max_memory_clock", "voltage_offset",
                "voltage_boost", "performance_level") if cfg.get(k) is not None}
-        return ("\n".join([
-            f"ranges: {json.dumps({k: v for k, v in table.items() if 'range' in k})}",
+        ranges = {k: v for k, v in table.items() if "range" in k}
+        lines = [
+            f"ranges: {json.dumps(ranges) if ranges else '{} (no ranges reported — offsets below are authoritative)'}",
             f"gpu_offsets: {json.dumps(table.get('gpu_offsets', {}))}",
             f"mem_offsets: {json.dumps(table.get('mem_offsets', {}))}",
-            f"config: {json.dumps(cur) or 'defaults'}"]))
+            f"config: {json.dumps(cur) if cur else 'defaults'}"]
+        return "\n".join(lines)
     if action == "reset":
         confirmed_write("set_clocks_value",
                         {"id": gid, "command": {"type": "reset"}})
@@ -328,9 +365,12 @@ def t_gpu_config_get(a):
 def t_daemon_query(a):
     if not a.get("command"):
         raise ValueError("missing 'command' (e.g. device_stats, list_devices)")
-    r = sock_query(a["command"], a.get("args"))
+    args = a.get("args")
+    if isinstance(args, dict) and isinstance(args.get("id"), str):
+        args = {**args, "id": resolve_id(args["id"])}  # index/PCI accepted
+    r = sock_query(a["command"], args)
     if r.get("status") != "ok":
-        raise RuntimeError(json.dumps(r)[:300])
+        raise RuntimeError(_daemon_err(r))
     return json.dumps(r, indent=2)
 
 
@@ -345,7 +385,7 @@ TOOLS = [
          "gpu_id": {"type": "string", "description": "GPU index or full PCI ID (default 0)"}}}, t_gpu_stats),
     ("power", "Get or set the GPU power cap. set validates the configurable range first.",
      {"type": "object", "properties": {
-         "gpu_id": {"type": "string", "default": "0"},
+         "gpu_id": {"type": "string", "description": "REQUIRED for set when several GPUs (no silent default). Index, PCI or full ID."},
          "action": {"type": "string", "enum": ["get", "set"], "default": "get"},
          "watts": {"type": "number", "description": "Required for set."}},
       "required": ["action"]}, t_power),
@@ -360,30 +400,32 @@ TOOLS = [
      {"type": "object", "properties": {
          "gpu_id": {"type": "string", "description": "GPU index or full PCI ID (default 0)"}}}, t_gpu_config_get),
     ("daemon_query", "Raw lactd socket call (e.g. device_info, device_stats,"
-     " device_clocks_info, set_power_cap, set_fan_control). Advanced: write ops apply immediately.",
+     " device_clocks_info). id accepts index ('1'), PCI ('0000:01:00.0') or full LACT ID."
+     " Advanced: write ops (set_power_cap...) need manual confirm_pending_config.",
      {"type": "object", "properties": {
          "command": {"type": "string", "description": "Socket command, e.g. device_stats"},
-         "args": {"type": "object", "description": "Optional args, e.g. {\"id\": \"<pci-id>\"}"}},
+         "args": {"type": "object", "description": "Optional args, e.g. {\"id\": \"1\"} (index/PCI/full ID all accepted)"}},
       "required": ["command"]}, t_daemon_query),
-    ("fan", "Get/set fan control. set validates speed/curve first, auto-confirms (no 5s revert). Restore with action=auto.",
+    ("fan", "Get/set fan control. set validates speed/curve first, auto-confirms (no 5s revert). Restore with action=auto."
+     " NOTE: often unsupported on NVIDIA proprietary driver (no hwmon) — get says so.",
      {"type": "object", "properties": {
-         "gpu_id": {"type": "string", "default": "0"},
+         "gpu_id": {"type": "string", "description": "REQUIRED for set/auto when several GPUs (no silent default). Index, PCI or full ID."},
          "action": {"type": "string", "enum": ["get", "set", "auto"], "default": "get"},
          "mode": {"type": "string", "enum": ["curve", "static"], "default": "curve"},
          "speed": {"type": "number", "description": "Static speed 0..1 (or 0..100%). Required for mode=static."},
-         "curve": {"type": "object", "description": "E.g. {\"40\":0.2,\"60\":0.5,\"80\":1.0} (2..8 pts). Required for mode=curve."}},
+         "curve": {"type": "object", "description": "E.g. {\"40\":0.35,\"60\":0.6,\"80\":1.0} (2..8 pts, above HW minimum). Required for mode=curve."}},
       "required": ["action"]}, t_fan),
-    ("clocks", "Get/set clocks, offsets, voltage boost, performance level. Offsets validated against hardware min/max, applied to all pstates, auto-confirmed. Restore with action=reset.",
+    ("clocks", "Get/set clocks, offsets, voltage boost, performance level. NVIDIA path = gpu_offset/mem_offset (undervolting is driver-locked: use offsets + power cap)."
+     " Offsets validated against hardware min/max, applied to all pstates, auto-confirmed. Restore with action=reset.",
      {"type": "object", "properties": {
-         "gpu_id": {"type": "string", "default": "0"},
-         "action": {"type": "string", "enum": ["get", "set", "reset"], "default": "get"},
+         "gpu_id": {"type": "string", "description": "REQUIRED for set/reset when several GPUs (no silent default). Index, PCI or full ID."},
          "max_core_clock": {"type": "integer", "description": "MHz"},
          "min_core_clock": {"type": "integer", "description": "MHz"},
          "max_mem_clock": {"type": "integer", "description": "Alias for max_memory_clock (MHz)"},
          "max_memory_clock": {"type": "integer", "description": "MHz"},
          "min_memory_clock": {"type": "integer", "description": "MHz"},
-         "gpu_offset": {"type": "integer", "description": "Core offset MHz, all pstates"},
-         "mem_offset": {"type": "integer", "description": "VRAM offset MHz, all pstates"},
+         "gpu_offset": {"type": "integer", "description": "Core offset MHz on ALL pstates (the NVIDIA OC path), e.g. 150"},
+         "mem_offset": {"type": "integer", "description": "VRAM offset MHz on ALL pstates (the NVIDIA OC path), e.g. 500"},
          "voltage_boost": {"type": "integer", "description": "NVIDIA boost % (0..100)"},
          "performance_level": {"type": "string", "enum": ["auto", "low", "high", "manual"]}},
       "required": ["action"]}, t_clocks),
