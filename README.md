@@ -1,4 +1,4 @@
-# lact-mcp — v0.2.0 “Sirocco”
+# lact-mcp — v0.2.1 “Bora”
 
 MCP server (Python stdlib only, **zero dependency**) to control GPUs via [LACT](https://github.com/ilya-zlobintsev/LACT) on Linux — so an AI agent can read stats and manage power / profiles / fan / clocks.
 
@@ -55,7 +55,10 @@ Then quit and relaunch opencode.
 | `fan` | `get` state / `set` static speed or curve (HW-minimum validated) / `auto` restore |
 | `clocks` | `get` ranges+offsets / `set` min-max clocks, pstate offsets, boost, perf level / `reset` |
 
-`gpu_id` accepts the short index (`"0"`, `"1"`) or the full PCI ID. Default `0`.
+`gpu_id` accepts the short index (`"1"`), the PCI address (`"0000:01:00.0"`)
+or the full LACT ID — everywhere, including `daemon_query` args.
+Reads default to GPU `0`; **writes refuse a default when several GPUs exist**
+(pass `gpu_id` explicitly, see `list_gpus`).
 
 Examples:
 
@@ -63,10 +66,16 @@ Examples:
 // Fix fans at 50% on the RTX 3080, then back to automatic
 { "name": "fan", "arguments": { "gpu_id": "1", "action": "set", "mode": "static", "speed": 0.5 } }
 { "name": "fan", "arguments": { "gpu_id": "1", "action": "auto" } }
-// +100 MHz core on every pstate, then stock clocks
-{ "name": "clocks", "arguments": { "gpu_id": "1", "action": "set", "gpu_offset": 100 } }
+// +150 MHz core / +500 MHz VRAM on every pstate, then stock clocks
+{ "name": "clocks", "arguments": { "gpu_id": "1", "action": "set", "gpu_offset": 150, "mem_offset": 500 } }
 { "name": "clocks", "arguments": { "gpu_id": "1", "action": "reset" } }
 ```
+
+## NVIDIA notes (proprietary driver)
+
+- Fan control is usually **unsupported** (no hwmon) — `fan get` says so.
+- Undervolting is **driver-locked** — overclock via `gpu_offset`/`mem_offset` + `power` cap.
+- Daemon errors are returned in full (including the valid-command list).
 
 ## Safety
 

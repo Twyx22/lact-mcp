@@ -14,7 +14,7 @@ import socket
 import subprocess
 import sys
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 SOCKETS = ["/run/lactd.sock", "/var/run/lactd.sock",
            f"/run/user/{os.getuid()}/lactd.sock"]
 LACT = ["lact", "cli"]
