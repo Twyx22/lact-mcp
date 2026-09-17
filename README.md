@@ -32,7 +32,7 @@ Add to `~/.config/opencode/opencode.jsonc`:
   "mcp": {
     "lact": {
       "type": "local",
-      "command": ["python3", "/home/matthieu/Projects/lact-mcp/lact_mcp.py"]
+      "command": ["python3", "/path/to/lact-mcp/lact_mcp.py"]
     }
   }
 }
