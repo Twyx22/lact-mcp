@@ -4,8 +4,8 @@
 Transport: JSON-RPC 2.0 over stdio, one JSON object per line (MCP stdio).
 Backend: `lact cli` subprocess + JSON socket /run/lactd.sock for advanced calls.
 
-Tools (8): list_gpus, gpu_info, gpu_stats, power, profiles, auto_switch,
-           gpu_config_get, daemon_query.
+Tools (10): list_gpus, gpu_info, gpu_stats, power, profiles, auto_switch,
+           gpu_config_get, fan, clocks, daemon_query.
 """
 import json
 import os
@@ -87,17 +87,19 @@ def t_list_gpus(a):
 
 
 def t_gpu_info(a):
-    return with_gpu(a.get("gpu_id", "0"), "info")
+    return with_gpu(resolve_id(a.get("gpu_id", "0")), "info")
 
 
 def t_gpu_stats(a):
-    return with_gpu(a.get("gpu_id", "0"), "stats")
+    return with_gpu(resolve_id(a.get("gpu_id", "0")), "stats")
 
 
 def t_power(a):
     action = a.get("action", "get")
     if action == "get":
-        return with_gpu(a.get("gpu_id") or "0", "power-limit", "get")
+        # lact cli --gpu-id takes index or full ID, not PCI fragments
+        return with_gpu(resolve_id(a.get("gpu_id") or "0"),
+                        "power-limit", "get")
     if action == "set":
         gid = target_gpu(a, write=True)
         watts = a.get("watts")
@@ -147,7 +149,10 @@ def resolve_id(gpu_id):
             raise ValueError(f"ambiguous gpu {gid!r}: matches {matches}")
     else:
         try:
-            return devs[int(gid)]["id"]
+            idx = int(gid)
+            if idx < 0:
+                raise ValueError("negative index")
+            return devs[idx]["id"]
         except (IndexError, ValueError, KeyError, TypeError):
             pass
     raise ValueError(f"unknown gpu {gid!r} (see list_gpus)")
@@ -271,6 +276,14 @@ def t_fan(a):
 PERF_LEVELS = ("auto", "low", "high", "manual")
 OFFSET_TYPES = (("gpu_offset", "gpu_offsets", "gpu_clock_offset"),
                 ("mem_offset", "mem_offsets", "mem_clock_offset"))
+CLOCK_RESET_KEYS = ("min_core_clock", "max_core_clock", "min_memory_clock",
+                    "max_memory_clock", "voltage_offset", "voltage_boost",
+                    "gpu_clock_offsets", "mem_clock_offsets")
+
+
+def _clocks_dirty(cfg):
+    """True if any clock override is set (lactd rejects resetting defaults)."""
+    return any(cfg.get(k) not in (None, {}, []) for k in CLOCK_RESET_KEYS)
 
 
 def t_clocks(a):
@@ -293,6 +306,9 @@ def t_clocks(a):
             f"config: {json.dumps(cur) if cur else 'defaults'}"]
         return "\n".join(lines)
     if action == "reset":
+        cfg = sock_query("get_gpu_config", {"id": gid})["data"] or {}
+        if not _clocks_dirty(cfg):
+            return f"{gid}: already at defaults (nothing to reset)"
         confirmed_write("set_clocks_value",
                         {"id": gid, "command": {"type": "reset"}})
         return f"{gid}: clocks reset+confirmed"
@@ -362,6 +378,12 @@ def t_gpu_config_get(a):
     return json.dumps(r["data"], indent=2)
 
 
+AUTO_CONFIRM_WRITES = {"set_clocks_value", "batch_set_clocks_value",
+                         "set_power_cap", "set_fan_control",
+                         "set_performance_level", "set_power_profile_mode",
+                         "set_enabled_power_states"}
+
+
 def t_daemon_query(a):
     if not a.get("command"):
         raise ValueError("missing 'command' (e.g. device_stats, list_devices)")
@@ -371,6 +393,14 @@ def t_daemon_query(a):
     r = sock_query(a["command"], args)
     if r.get("status") != "ok":
         raise RuntimeError(_daemon_err(r))
+    if a["command"] in AUTO_CONFIRM_WRITES:
+        c = sock_query("confirm_pending_config", {"command": "confirm"})
+        if c.get("status") != "ok":
+            return (json.dumps(r, indent=2) +
+                    f"\nWARNING: applied but auto-confirm failed "
+                    f"({json.dumps(c)}); settings revert in ~5s — "
+                    f"call confirm_pending_config manually NOW.")
+        return json.dumps(r, indent=2) + "\n(auto-confirmed, no 5s revert)"
     return json.dumps(r, indent=2)
 
 
@@ -401,7 +431,7 @@ TOOLS = [
          "gpu_id": {"type": "string", "description": "GPU index or full PCI ID (default 0)"}}}, t_gpu_config_get),
     ("daemon_query", "Raw lactd socket call (e.g. device_info, device_stats,"
      " device_clocks_info). id accepts index ('1'), PCI ('0000:01:00.0') or full LACT ID."
-     " Advanced: write ops (set_power_cap...) need manual confirm_pending_config.",
+     " GPU-config writes (set_*) auto-confirm (no 5s revert).",
      {"type": "object", "properties": {
          "command": {"type": "string", "description": "Socket command, e.g. device_stats"},
          "args": {"type": "object", "description": "Optional args, e.g. {\"id\": \"1\"} (index/PCI/full ID all accepted)"}},
@@ -462,7 +492,7 @@ def handle(req):
         try:
             return {"jsonrpc": "2.0", "id": rid,
                     "result": ok(fn(p.get("arguments") or {}))}
-        except (ValueError, RuntimeError) as e:
+        except (ValueError, RuntimeError, KeyError, TypeError) as e:
             return {"jsonrpc": "2.0", "id": rid, "result": err(str(e))}
     if rid is None:
         return None
