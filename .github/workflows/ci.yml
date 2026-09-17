@@ -1,0 +1,29 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python3 -m py_compile lact_mcp.py
+      - run: python3 lact_mcp.py --version
+      - name: MCP protocol smoke test (no lactd needed)
+        run: |
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | python3 lact_mcp.py > out.jsonl
+          python3 -c "
+          import json
+          rows = [json.loads(l) for l in open('out.jsonl')]
+          tools = rows[1]['result']['tools']
+          assert len(tools) == 8, tools
+          assert rows[0]['result']['serverInfo']['name'] == 'lact-mcp'
+          print('CI OK:', sorted(t['name'] for t in tools))
+          "
