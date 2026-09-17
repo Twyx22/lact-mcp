@@ -14,7 +14,7 @@ import socket
 import subprocess
 import sys
 
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 SOCKETS = ["/run/lactd.sock", "/var/run/lactd.sock",
            f"/run/user/{os.getuid()}/lactd.sock"]
 LACT = ["lact", "cli"]
@@ -368,6 +368,130 @@ def t_clocks(a):
     raise ValueError("action must be get|set|reset")
 
 
+def _full_config(gid):
+    """Current GPU config as dict ({} when stock defaults)."""
+    r = sock_query("get_gpu_config", {"id": gid})
+    if r.get("status") != "ok":
+        raise RuntimeError(_daemon_err(r))
+    return r.get("data") or {}
+
+
+def _push_config(gid, cfg):
+    """Write a full config (get→merge→set→confirm). Preserves all other fields."""
+    r = sock_query("set_gpu_config", {"id": gid, "config": cfg})
+    if r.get("status") != "ok":
+        raise RuntimeError(_daemon_err(
+            r, "config rejected; check values against voltage/clocks get."))
+    c = sock_query("confirm_pending_config", {"command": "confirm"})
+    if c.get("status") != "ok":
+        raise RuntimeError(f"staged but confirm failed: {json.dumps(c)}")
+    return r
+
+
+def _int(v, what):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"{what} must be an integer")
+
+
+VOLT_KEYS = ("min_voltage", "max_voltage", "voltage_offset", "voltage_boost",
+             "nvidia_gpu_vf_curve", "gpu_vf_curve", "mem_vf_curve")
+
+
+def t_voltage(a):
+    action = a.get("action", "get")
+    gid = target_gpu(a, write=(action != "get"))
+    info = sock_query("device_clocks_info", {"id": gid})
+    if info.get("status") != "ok":
+        raise RuntimeError(_daemon_err(info))
+    table = info["data"]["table"]
+    ttype, tval = table["type"], table["value"]
+    if action == "get":
+        cfg = _full_config(gid)
+        if ttype == "nvidia":
+            pts = tval.get("gpu_vf_curve", [])
+            offs = {p.get("freq_offset") for p in pts}
+            b = tval.get("voltage_boost", {})
+            lines = [
+                "driver: nvidia (direct voltage locked — VF offsets + power cap only)",
+                f"voltage_boost: {b.get('current')}% (range {b.get('min')}..{b.get('max')})",
+                f"vf_curve: {len(pts)} points, "
+                f"{min(p['freq'] for p in pts)}-{max(p['freq'] for p in pts)} MHz / "
+                f"{min(p['voltage'] for p in pts)}-{max(p['voltage'] for p in pts)} mV" if pts else "vf_curve: none reported",
+                f"vf offsets now: {sorted(offs)}",
+                f"config voltage: {json.dumps({k: cfg[k] for k in VOLT_KEYS if cfg.get(k) not in (None, {}, [])}) or 'defaults'}"]
+            return "\n".join(lines)
+        d = tval.get("data", {})
+        lines = [
+            f"driver: amd ({tval.get('kind')})",
+            f"voltage_offset support: {'yes' if d.get('voltage_offset') is not None or d.get('vddc_curve') else 'no (locked on this GPU)'}",
+            f"vddc_curve points: {len(d.get('vddc_curve') or [])}",
+            f"config voltage: {json.dumps({k: cfg[k] for k in VOLT_KEYS if cfg.get(k) not in (None, {}, [])}) or 'defaults'}"]
+        return "\n".join(lines)
+    if action == "reset":
+        cfg = _full_config(gid)
+        if not any(cfg.get(k) not in (None, {}, []) for k in VOLT_KEYS):
+            return f"{gid}: voltage already at defaults (nothing to reset)"
+        for k in VOLT_KEYS:
+            cfg.pop(k, None)
+        _push_config(gid, cfg)
+        return f"{gid}: voltage reset+confirmed (clocks offsets untouched)"
+    if action == "set":
+        cfg = _full_config(gid)
+        n = 0
+        if ttype == "nvidia":
+            pts = tval.get("gpu_vf_curve", [])
+            incoming = a.get("vf_points")
+            if isinstance(incoming, dict) and incoming:
+                curve = {str(k): dict(v) for k, v in
+                         (cfg.get("nvidia_gpu_vf_curve") or {}).items()}
+                for i, off in incoming.items():
+                    try:
+                        idx = int(i)
+                    except (TypeError, ValueError):
+                        raise ValueError(f"bad vf index {i!r}")
+                    if pts and not 0 <= idx < len(pts):
+                        raise ValueError(f"vf index {idx} outside 0..{len(pts)-1}")
+                    v = _int(off, f"vf_points[{idx}]")
+                    if not -1000 <= v <= 1000:
+                        raise ValueError(f"vf_points[{idx}] {v} outside -1000..1000")
+                    curve[str(idx)] = {"clockspeed_offset": v}
+                    n += 1
+                cfg["nvidia_gpu_vf_curve"] = curve
+            if a.get("voltage_boost") is not None:
+                v = _int(a["voltage_boost"], "voltage_boost")
+                b = tval.get("voltage_boost", {})
+                if not b.get("min", 0) <= v <= b.get("max", 100):
+                    raise ValueError(f"voltage_boost {v} outside {b.get('min')}..{b.get('max')}")
+                cfg["voltage_boost"] = v
+                n += 1
+            for amd_only in ("min_voltage", "max_voltage", "voltage_offset"):
+                if a.get(amd_only) is not None:
+                    raise ValueError(f"{amd_only} is AMD-only (locked on NVIDIA)")
+        else:
+            d = tval.get("data", {})
+            if d.get("voltage_offset") is None and not d.get("vddc_curve"):
+                raise ValueError("voltage control unsupported on this GPU (locked)")
+            if a.get("voltage_offset") is not None:
+                cfg["voltage_offset"] = _int(a["voltage_offset"], "voltage_offset")
+                n += 1
+            for k in ("min_voltage", "max_voltage"):
+                if a.get(k) is not None:
+                    v = _int(a[k], k)
+                    if v <= 0:
+                        raise ValueError(f"{k} must be positive (mV)")
+                    cfg[k] = v
+                    n += 1
+            if a.get("vf_points") is not None or a.get("voltage_boost") is not None:
+                raise ValueError("vf_points/voltage_boost are NVIDIA-only")
+        if not n:
+            raise ValueError("nothing to set (vf_points, voltage_offset, ...)")
+        _push_config(gid, cfg)
+        return f"{gid}: {n} voltage change(s) applied+confirmed (restore with action=reset)"
+    raise ValueError("action must be get|set|reset")
+
+
 def t_gpu_config_get(a):
     gid = resolve_id(a.get("gpu_id", "0"))
     r = sock_query("get_gpu_config", {"id": gid})
@@ -459,6 +583,16 @@ TOOLS = [
          "voltage_boost": {"type": "integer", "description": "NVIDIA boost % (0..100)"},
          "performance_level": {"type": "string", "enum": ["auto", "low", "high", "manual"]}},
       "required": ["action"]}, t_clocks),
+    ("voltage", "Voltage/VF-curve control. NVIDIA: vf_points {index: offset_MHz} + voltage_boost (direct voltage locked). AMD: voltage_offset/min/max_voltage where supported. Validated, merged into full config, auto-confirmed. Restore with action=reset.",
+     {"type": "object", "properties": {
+         "gpu_id": {"type": "string", "description": "REQUIRED for set/reset when several GPUs. Index, PCI or full ID."},
+         "action": {"type": "string", "enum": ["get", "set", "reset"], "default": "get"},
+         "vf_points": {"type": "object", "description": "NVIDIA: e.g. {\"0\": 25} (index 0..126, offset -1000..1000 MHz)"},
+         "voltage_offset": {"type": "integer", "description": "AMD RDNA+ offset (mV)"},
+         "min_voltage": {"type": "integer", "description": "AMD (mV)"},
+         "max_voltage": {"type": "integer", "description": "AMD (mV)"},
+         "voltage_boost": {"type": "integer", "description": "NVIDIA boost % (0..100)"}},
+      "required": ["action"]}, t_voltage),
 ]
 BY_NAME = {n: f for n, _, _, f in TOOLS}
 
@@ -521,7 +655,7 @@ def serve():
 
 def self_test():
     """Minimal live check: fails loudly if lactd/CLI broken. Ponytail: one check."""
-    assert len(TOOLS) == 10, "tool registry changed, update README"
+    assert len(TOOLS) == 11, "tool registry changed, update README"
     out = t_list_gpus({})
     assert ":" in out, f"list_gpus unexpected: {out!r}"
     assert "MHz" in t_gpu_stats({"gpu_id": "0"}), "stats missing clocks"
