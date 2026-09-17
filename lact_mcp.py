@@ -28,8 +28,10 @@ def cli(*args, timeout=15):
     except FileNotFoundError:
         raise RuntimeError("lact binary not found (is LACT installed?)")
     if p.returncode != 0:
-        raise RuntimeError((p.stderr or p.stdout).strip() or
-                           f"lact cli exited {p.returncode}")
+        msg = (p.stderr or p.stdout).strip() or f"lact cli exited {p.returncode}"
+        if msg.startswith("Error: "):  # lact prefixes already; err() adds its own
+            msg = msg[len("Error: "):]
+        raise RuntimeError(msg)
     return p.stdout.strip()
 
 
@@ -148,7 +150,11 @@ def t_gpu_config_get(a):
 
 
 def t_daemon_query(a):
+    if not a.get("command"):
+        raise ValueError("missing 'command' (e.g. device_stats, list_devices)")
     r = sock_query(a["command"], a.get("args"))
+    if r.get("status") != "ok":
+        raise RuntimeError(json.dumps(r)[:300])
     return json.dumps(r, indent=2)
 
 
