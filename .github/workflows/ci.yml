@@ -23,7 +23,7 @@ jobs:
           import json
           rows = [json.loads(l) for l in open('out.jsonl')]
           tools = rows[1]['result']['tools']
-          assert len(tools) == 8, tools
+          assert len(tools) == 10, tools
           assert rows[0]['result']['serverInfo']['name'] == 'lact-mcp'
           print('CI OK:', sorted(t['name'] for t in tools))
           "
