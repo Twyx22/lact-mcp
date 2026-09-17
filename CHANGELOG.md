@@ -2,6 +2,21 @@
 
 Every release has a codename. Codenames are winds.
 
+## Unreleased
+
+**Fixed**
+- `clocks reset` on already-default clocks returns "already at defaults"
+  instead of lactd's `Invalid argument (os error 22)`.
+- `daemon_query` GPU-config writes (`set_*`) now auto-confirm — no more
+  silent 5 s revert when forgetting `confirm_pending_config`.
+- `power get`, `gpu_info` and `gpu_stats` accept PCI fragments
+  (`0000:01:00.0`) like every other tool (`lact cli --gpu-id` only takes
+  index or full ID; now resolved first).
+- Negative GPU indexes rejected instead of breaking clap or wrapping to the
+  last GPU.
+- Internal errors (`KeyError`/`TypeError`) surface as clean tool errors,
+  not JSON-RPC `-32603`.
+
 ## v0.2.1 — Bora (2026-09-17)
 
 The cold, precise wind: no more writes to the wrong GPU.

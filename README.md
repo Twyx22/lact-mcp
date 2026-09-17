@@ -81,7 +81,7 @@ Examples:
 
 - `power` / `fan` / `clocks` `set` refuse values outside hardware limits first.
 - Socket writes auto-confirm (no silent 5 s revert); every reply says how to restore.
-- `daemon_query` write ops apply immediately — the model should confirm before using them.
+- `daemon_query` GPU-config writes auto-confirm like the rest (no silent 5 s revert).
 - No secrets, no network: local socket + `lact cli` only.
 
 ## Skipped (add when needed)
