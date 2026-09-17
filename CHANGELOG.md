@@ -1,7 +1,27 @@
 # Changelog
 
-Every release has a codename. Codenames are winds — fitting for a tool that
-learned to spin fans.
+Every release has a codename. Codenames are winds.
+
+## v0.2.1 — Bora (2026-09-17)
+
+The cold, precise wind: no more writes to the wrong GPU.
+
+**Fixed**
+- Writes (`power`/`fan`/`clocks` set, `fan` auto, `clocks` reset) now **refuse
+  a default GPU when several exist** — `gpu_id` must be explicit. (This had
+  set `performance_level=high` on the iGPU by mistake.)
+- `gpu_id` and `daemon_query` ids accept index (`"1"`), PCI address
+  (`"0000:01:00.0"`) and full LACT ID everywhere, via unique suffix match.
+- Daemon errors are returned **in full** (including the valid-command list)
+  with hints for missing fields — no more truncated `set_f...` mysteries.
+- `clocks get` explains itself when the card reports no ranges; `fan get`
+  warns when the driver exposes no fan control (NVIDIA proprietary).
+- Tool descriptions now document the NVIDIA path (offsets + power cap;
+  undervolting is driver-locked) with copy-paste examples.
+
+**Verified live** (RTX 3080, cap 280 W, glmark2 1920x1080 off-screen)
+- Stock: **38366** → `gpu_offset` +150 / `mem_offset` +500: **39510 (+3%)**,
+  applied purely through the MCP `clocks` tool (10 pstate commands, confirmed).
 
 ## v0.2.0 — Sirocco (2026-09-17)
 
