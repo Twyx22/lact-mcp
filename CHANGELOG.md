@@ -2,6 +2,31 @@
 
 Every release has a codename. Codenames are winds.
 
+## v0.3.0 — Mistral (2026-09-17)
+
+The strong north wind that bends the voltage curve.
+
+**Added**
+- `voltage` tool — full voltage/VF-curve control: on NVIDIA, per-point
+  `vf_points` (`{index: offset_MHz}`, 127 points on RTX 3080) plus
+  `voltage_boost`; on AMD, `voltage_offset`/`min_voltage`/`max_voltage`
+  where the hardware reports support (refused with a clear message when
+  locked, as on the iGPU). Values merge into the full GPU config
+  (get→merge→set→confirm), preserving clocks offsets and fan settings;
+  `reset` restores voltage defaults without touching offsets.
+
+**Discovered (documented)**
+- `set_clocks_value` `GpuVfCurveClock` only feeds the **AMD** curve map —
+  it is silently ignored on NVIDIA. The NVIDIA VF curve is writable solely
+  through `set_gpu_config` (`nvidia_gpu_vf_curve`), which is what the tool
+  uses. Per-point offsets are absolute (override the global offset).
+
+**Verified live** (RTX 3080, lact 0.10.1)
+- VF point 0: 375 MHz → 240 MHz (base 225 + offset 25), read back from the
+  daemon table, then reset (back to global +150).
+- 8 error paths clean: bad index, out-of-range offset/boost, AMD-only keys
+  on NVIDIA, NVIDIA-only keys on AMD, locked iGPU, empty set, default GPU.
+
 ## Unreleased
 
 **Fixed**

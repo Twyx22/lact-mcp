@@ -1,4 +1,4 @@
-# lact-mcp — v0.2.1 “Bora”
+# lact-mcp — v0.3.0 “Mistral”
 
 MCP server (Python stdlib only, **zero dependency**) to control GPUs via [LACT](https://github.com/ilya-zlobintsev/LACT) on Linux — so an AI agent can read stats and manage power / profiles / fan / clocks.
 
@@ -40,7 +40,7 @@ Add to `~/.config/opencode/opencode.jsonc`:
 
 Then quit and relaunch opencode.
 
-## Tools (10)
+## Tools (11)
 
 | Tool | What |
 |---|---|
@@ -54,6 +54,7 @@ Then quit and relaunch opencode.
 | `daemon_query` | Raw lactd socket call (`device_stats`, `set_power_cap`, `set_fan_control`…) |
 | `fan` | `get` state / `set` static speed or curve (HW-minimum validated) / `auto` restore |
 | `clocks` | `get` ranges+offsets / `set` min-max clocks, pstate offsets, boost, perf level / `reset` |
+| `voltage` | `get` boost+VF curve / `set` per-point VF offsets, boost (NVIDIA) or offset/min/max (AMD) / `reset` |
 
 `gpu_id` accepts the short index (`"1"`), the PCI address (`"0000:01:00.0"`)
 or the full LACT ID — everywhere, including `daemon_query` args.
@@ -69,13 +70,24 @@ Examples:
 // +150 MHz core / +500 MHz VRAM on every pstate, then stock clocks
 { "name": "clocks", "arguments": { "gpu_id": "1", "action": "set", "gpu_offset": 150, "mem_offset": 500 } }
 { "name": "clocks", "arguments": { "gpu_id": "1", "action": "reset" } }
+// Undervolt-style: lower VF point 0 to +25 MHz offset, then restore
+{ "name": "voltage", "arguments": { "gpu_id": "1", "action": "set", "vf_points": { "0": 25 } } }
+{ "name": "voltage", "arguments": { "gpu_id": "1", "action": "reset" } }
 ```
 
 ## NVIDIA notes (proprietary driver)
 
 - Fan control is usually **unsupported** (no hwmon) — `fan get` says so.
-- Undervolting is **driver-locked** — overclock via `gpu_offset`/`mem_offset` + `power` cap.
+- Direct voltage is **driver-locked** — use `voltage` VF per-point offsets
+  (the undervolt path) + `power` cap. `set_clocks_value` VF commands are
+  AMD-only and silently ignored on NVIDIA.
 - Daemon errors are returned in full (including the valid-command list).
+
+## Related
+
+- [LACT](https://github.com/ilya-zlobintsev/LACT) — the GPU controller this
+  server drives. `lact-mcp` is an independent third-party MCP bridge (not
+  affiliated); every write maps to a documented LACT socket/CLI call.
 
 ## Safety
 
