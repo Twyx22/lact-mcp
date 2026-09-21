@@ -27,3 +27,15 @@ jobs:
           assert rows[0]['result']['serverInfo']['name'] == 'lact-mcp'
           print('CI OK:', sorted(t['name'] for t in tools))
           "
+      - name: Doc consistency (version, README, CHANGELOG, release notes)
+        run: |
+          python3 - <<'PY'
+          import pathlib, re
+          m = re.search(r'^VERSION\s*=\s*["\'](.+?)["\']', pathlib.Path('lact_mcp.py').read_text(), re.M)
+          assert m, 'VERSION not found in lact_mcp.py'
+          v = m.group(1)
+          assert f'v{v}' in pathlib.Path('README.md').read_text().splitlines()[0], 'README header must contain v' + v
+          assert any(l.startswith(f'## v{v} (') for l in pathlib.Path('CHANGELOG.md').read_text().splitlines()), 'CHANGELOG missing ## v' + v
+          assert pathlib.Path(f'release-notes/v{v}.md').exists(), 'release-notes/v' + v + '.md missing'
+          print(f'doc-consistency OK (v{v})')
+          PY
