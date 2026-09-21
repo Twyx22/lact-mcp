@@ -4,8 +4,8 @@
 Transport: JSON-RPC 2.0 over stdio, one JSON object per line (MCP stdio).
 Backend: `lact cli` subprocess + JSON socket /run/lactd.sock for advanced calls.
 
-Tools (10): list_gpus, gpu_info, gpu_stats, power, profiles, auto_switch,
-           gpu_config_get, fan, clocks, daemon_query.
+Tools (11): list_gpus, gpu_info, gpu_stats, power, profiles, auto_switch,
+           gpu_config_get, daemon_query, fan, clocks, voltage.
 """
 import json
 import os
