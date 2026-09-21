@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.5.0 (2026-09-21)
+
+**Added**
+- `profiles import`: build a LACT profile straight from a PenguinBurner
+  auto-uv JSON (`file`, optional `name` defaulting to the file profile_id,
+  optional `gpu_id` defaulting to the sole NVIDIA GPU). VF offsets
+  (validated 0..126 / ±1000 MHz) and power cap go into the new profile via
+  `create_profile` + `provided` base — the live config is untouched unless
+  `apply: true` sets it current. PenguinBurner has no export CLI, so this
+  fills that gap.
+
 ## v0.4.0 (2026-09-21)
 
 **Added**
