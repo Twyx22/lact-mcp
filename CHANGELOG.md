@@ -1,10 +1,6 @@
 # Changelog
 
-Every release has a codename. Codenames are winds.
-
-## v0.3.1 — Harmattan (2026-09-21)
-
-The dry wind that sweeps the dust off the gauges.
+## v0.3.1 (2026-09-21)
 
 **Fixed**
 - `daemon_query` on `set_gpu_config` (and every other `set_*` write) is
@@ -31,9 +27,7 @@ The dry wind that sweeps the dust off the gauges.
 - `--test` self-check green on 2 GPUs, CI smoke test (11 tools) green.
 - No GPU left modified: power cap 320 W, fan curve untouched.
 
-## v0.3.0 — Mistral (2026-09-17)
-
-The strong north wind that bends the voltage curve.
+## v0.3.0 (2026-09-17)
 
 **Added**
 - `voltage` tool — full voltage/VF-curve control: on NVIDIA, per-point
@@ -68,9 +62,7 @@ for honesty — they were tagged with v0.3.0, not left unreleased)
 - Internal errors (`KeyError`/`TypeError`) surface as clean tool errors,
   not JSON-RPC `-32603`.
 
-## v0.2.1 — Bora (2026-09-17)
-
-The cold, precise wind: no more writes to the wrong GPU.
+## v0.2.1 (2026-09-17)
 
 **Fixed**
 - Writes (`power`/`fan`/`clocks` set, `fan` auto, `clocks` reset) now **refuse
@@ -89,9 +81,7 @@ The cold, precise wind: no more writes to the wrong GPU.
 - Stock: **38366** → `gpu_offset` +150 / `mem_offset` +500: **39510 (+3%)**,
   applied purely through the MCP `clocks` tool (10 pstate commands, confirmed).
 
-## v0.2.0 — Sirocco (2026-09-17)
-
-The hot wind that taught lact-mcp to cool things down.
+## v0.2.0 (2026-09-17)
 
 **Added**
 - `fan` tool — read live fan state (mode, RPM, PWM, curve); set `static`

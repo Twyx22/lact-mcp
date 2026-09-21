@@ -1,4 +1,4 @@
-# lact-mcp — v0.3.1 “Harmattan”
+# lact-mcp — v0.3.1
 
 MCP server (Python stdlib only, **zero dependency**) to control GPUs via [LACT](https://github.com/ilya-zlobintsev/LACT) on Linux — so an AI agent can read stats and manage power / profiles / fan / clocks.
 
@@ -8,7 +8,7 @@ MCP server (Python stdlib only, **zero dependency**) to control GPUs via [LACT](
 monitoring first, safe writes second. Every write validates against hardware
 limits *before* touching the daemon, auto-confirms (lactd reverts
 unconfirmed changes after ~5 s), and tells how to restore stock settings.
-Releases carry wind codenames — see [CHANGELOG.md](CHANGELOG.md).
+See [CHANGELOG.md](CHANGELOG.md) for the history.
 
 ## Requirements
 
