@@ -502,10 +502,10 @@ def t_gpu_config_get(a):
     return json.dumps(r["data"], indent=2)
 
 
-AUTO_CONFIRM_WRITES = {"set_clocks_value", "batch_set_clocks_value",
-                         "set_power_cap", "set_fan_control",
-                         "set_performance_level", "set_power_profile_mode",
-                         "set_enabled_power_states"}
+def auto_confirms(command):
+    """True for daemon writes that must be confirmed (lactd reverts unconfirmed
+    settings after ~5s). Every `set_*` write plus the batch clock command."""
+    return command.startswith("set_") or command == "batch_set_clocks_value"
 
 
 def t_daemon_query(a):
@@ -517,7 +517,7 @@ def t_daemon_query(a):
     r = sock_query(a["command"], args)
     if r.get("status") != "ok":
         raise RuntimeError(_daemon_err(r))
-    if a["command"] in AUTO_CONFIRM_WRITES:
+    if auto_confirms(a["command"]):
         c = sock_query("confirm_pending_config", {"command": "confirm"})
         if c.get("status") != "ok":
             return (json.dumps(r, indent=2) +
