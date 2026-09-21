@@ -657,6 +657,11 @@ def serve():
 def self_test():
     """Minimal live check: fails loudly if lactd/CLI broken. Ponytail: one check."""
     assert len(TOOLS) == 11, "tool registry changed, update README"
+    assert auto_confirms("set_gpu_config"), "set_* writes must auto-confirm"
+    assert resolve_id(0) == resolve_id("0"), "integer gpu_id must resolve"
+    v = t_voltage({"action": "get", "gpu_id": "0"})
+    assert "vf offsets applied:" in v or "voltage_offset support:" in v, \
+        f"voltage get unreadable: {v!r}"
     out = t_list_gpus({})
     assert ":" in out, f"list_gpus unexpected: {out!r}"
     assert "MHz" in t_gpu_stats({"gpu_id": "0"}), "stats missing clocks"
