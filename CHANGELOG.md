@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.0 (2026-09-21)
+
+**Added**
+- `profiles create` (empty, or clone via `"from": "<profile>"`) and
+  `profiles delete`. Rename = create (clone) + set + delete, all from the
+  `profiles` tool — no raw `daemon_query` schema needed. `delete` refuses
+  the current profile (set another one first).
+
 ## v0.3.1 (2026-09-21)
 
 **Fixed**
