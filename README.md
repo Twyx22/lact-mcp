@@ -1,4 +1,4 @@
-# lact-mcp — v0.3.0 “Mistral”
+# lact-mcp — v0.3.1 “Harmattan”
 
 MCP server (Python stdlib only, **zero dependency**) to control GPUs via [LACT](https://github.com/ilya-zlobintsev/LACT) on Linux — so an AI agent can read stats and manage power / profiles / fan / clocks.
 
@@ -56,8 +56,9 @@ Then quit and relaunch opencode.
 | `clocks` | `get` ranges+offsets / `set` min-max clocks, pstate offsets, boost, perf level / `reset` |
 | `voltage` | `get` boost+VF curve / `set` per-point VF offsets, boost (NVIDIA) or offset/min/max (AMD) / `reset` |
 
-`gpu_id` accepts the short index (`"1"`), the PCI address (`"0000:01:00.0"`)
-or the full LACT ID — everywhere, including `daemon_query` args.
+`gpu_id` accepts the short index (`"1"`, or the number `1`), the PCI address
+(`"0000:01:00.0"`) or the full LACT ID — everywhere, including `daemon_query`
+args.
 Reads default to GPU `0`; **writes refuse a default when several GPUs exist**
 (pass `gpu_id` explicitly, see `list_gpus`).
 
@@ -93,7 +94,9 @@ Examples:
 
 - `power` / `fan` / `clocks` `set` refuse values outside hardware limits first.
 - Socket writes auto-confirm (no silent 5 s revert); every reply says how to restore.
-- `daemon_query` GPU-config writes auto-confirm like the rest (no silent 5 s revert).
+- `daemon_query` GPU-config writes auto-confirm like the rest: every `set_*`
+  command (incl. `set_gpu_config`) and `batch_set_clocks_value` (no silent
+  5 s revert).
 - No secrets, no network: local socket + `lact cli` only.
 
 ## Skipped (add when needed)

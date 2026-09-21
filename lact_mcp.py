@@ -4,8 +4,8 @@
 Transport: JSON-RPC 2.0 over stdio, one JSON object per line (MCP stdio).
 Backend: `lact cli` subprocess + JSON socket /run/lactd.sock for advanced calls.
 
-Tools (10): list_gpus, gpu_info, gpu_stats, power, profiles, auto_switch,
-           gpu_config_get, fan, clocks, daemon_query.
+Tools (11): list_gpus, gpu_info, gpu_stats, power, profiles, auto_switch,
+           gpu_config_get, daemon_query, fan, clocks, voltage.
 """
 import json
 import os
@@ -14,7 +14,7 @@ import socket
 import subprocess
 import sys
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 SOCKETS = ["/run/lactd.sock", "/var/run/lactd.sock",
            f"/run/user/{os.getuid()}/lactd.sock"]
 LACT = ["lact", "cli"]
@@ -411,7 +411,7 @@ def t_voltage(a):
         cfg = _full_config(gid)
         if ttype == "nvidia":
             pts = tval.get("gpu_vf_curve", [])
-            offs = {p.get("freq_offset") for p in pts}
+            applied = cfg.get("nvidia_gpu_vf_curve") or {}
             b = tval.get("voltage_boost", {})
             lines = [
                 "driver: nvidia (direct voltage locked — VF offsets + power cap only)",
@@ -419,7 +419,7 @@ def t_voltage(a):
                 f"vf_curve: {len(pts)} points, "
                 f"{min(p['freq'] for p in pts)}-{max(p['freq'] for p in pts)} MHz / "
                 f"{min(p['voltage'] for p in pts)}-{max(p['voltage'] for p in pts)} mV" if pts else "vf_curve: none reported",
-                f"vf offsets now: {sorted(offs)}",
+                f"vf offsets applied: {json.dumps(applied) if applied else 'none (stock curve)'}",
                 f"config voltage: {json.dumps({k: cfg[k] for k in VOLT_KEYS if cfg.get(k) not in (None, {}, [])}) or 'defaults'}"]
             return "\n".join(lines)
         d = tval.get("data", {})
@@ -502,22 +502,22 @@ def t_gpu_config_get(a):
     return json.dumps(r["data"], indent=2)
 
 
-AUTO_CONFIRM_WRITES = {"set_clocks_value", "batch_set_clocks_value",
-                         "set_power_cap", "set_fan_control",
-                         "set_performance_level", "set_power_profile_mode",
-                         "set_enabled_power_states"}
+def auto_confirms(command):
+    """True for daemon writes that must be confirmed (lactd reverts unconfirmed
+    settings after ~5s). Every `set_*` write plus the batch clock command."""
+    return command.startswith("set_") or command == "batch_set_clocks_value"
 
 
 def t_daemon_query(a):
     if not a.get("command"):
         raise ValueError("missing 'command' (e.g. device_stats, list_devices)")
     args = a.get("args")
-    if isinstance(args, dict) and isinstance(args.get("id"), str):
+    if isinstance(args, dict) and isinstance(args.get("id"), (str, int)):
         args = {**args, "id": resolve_id(args["id"])}  # index/PCI accepted
     r = sock_query(a["command"], args)
     if r.get("status") != "ok":
         raise RuntimeError(_daemon_err(r))
-    if a["command"] in AUTO_CONFIRM_WRITES:
+    if auto_confirms(a["command"]):
         c = sock_query("confirm_pending_config", {"command": "confirm"})
         if c.get("status") != "ok":
             return (json.dumps(r, indent=2) +
@@ -626,7 +626,8 @@ def handle(req):
         try:
             return {"jsonrpc": "2.0", "id": rid,
                     "result": ok(fn(p.get("arguments") or {}))}
-        except (ValueError, RuntimeError, KeyError, TypeError) as e:
+        except (ValueError, RuntimeError, KeyError, TypeError,
+                subprocess.TimeoutExpired) as e:
             return {"jsonrpc": "2.0", "id": rid, "result": err(str(e))}
     if rid is None:
         return None
@@ -656,6 +657,11 @@ def serve():
 def self_test():
     """Minimal live check: fails loudly if lactd/CLI broken. Ponytail: one check."""
     assert len(TOOLS) == 11, "tool registry changed, update README"
+    assert auto_confirms("set_gpu_config"), "set_* writes must auto-confirm"
+    assert resolve_id(0) == resolve_id("0"), "integer gpu_id must resolve"
+    v = t_voltage({"action": "get", "gpu_id": "0"})
+    assert "vf offsets applied:" in v or "voltage_offset support:" in v, \
+        f"voltage get unreadable: {v!r}"
     out = t_list_gpus({})
     assert ":" in out, f"list_gpus unexpected: {out!r}"
     assert "MHz" in t_gpu_stats({"gpu_id": "0"}), "stats missing clocks"
