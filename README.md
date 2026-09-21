@@ -1,4 +1,4 @@
-# lact-mcp — v0.4.0
+# lact-mcp — v0.5.0
 
 MCP server (Python stdlib only, **zero dependency**) to control GPUs via [LACT](https://github.com/ilya-zlobintsev/LACT) on Linux — so an AI agent can read stats and manage power / profiles / fan / clocks.
 
@@ -48,7 +48,7 @@ Then quit and relaunch opencode.
 | `gpu_info` | Static info: driver, VRAM, VBIOS, PCIe |
 | `gpu_stats` | Live: clocks, voltage, power, temps, VRAM, fans, throttling |
 | `power` | `get` / `set` power cap (`set` validates the configurable range first) |
-| `profiles` | `list` / `get` / `set` / `create` (clone via `from`) / `delete` (refuses current) |
+| `profiles` | `list` / `get` / `set` / `create` (clone via `from`) / `delete` (refuses current) / `import` (PenguinBurner auto-uv JSON, `apply` to set current) |
 | `auto_switch` | `get` / `enable` / `disable` auto profile switching |
 | `gpu_config_get` | Full applied config (fan curve, clocks…) via lactd socket |
 | `daemon_query` | Raw lactd socket call (`device_stats`, `set_power_cap`, `set_fan_control`…) |
