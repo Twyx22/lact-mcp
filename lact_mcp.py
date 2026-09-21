@@ -411,7 +411,7 @@ def t_voltage(a):
         cfg = _full_config(gid)
         if ttype == "nvidia":
             pts = tval.get("gpu_vf_curve", [])
-            offs = {p.get("freq_offset") for p in pts}
+            applied = cfg.get("nvidia_gpu_vf_curve") or {}
             b = tval.get("voltage_boost", {})
             lines = [
                 "driver: nvidia (direct voltage locked — VF offsets + power cap only)",
@@ -419,7 +419,7 @@ def t_voltage(a):
                 f"vf_curve: {len(pts)} points, "
                 f"{min(p['freq'] for p in pts)}-{max(p['freq'] for p in pts)} MHz / "
                 f"{min(p['voltage'] for p in pts)}-{max(p['voltage'] for p in pts)} mV" if pts else "vf_curve: none reported",
-                f"vf offsets now: {sorted(offs)}",
+                f"vf offsets applied: {json.dumps(applied) if applied else 'none (stock curve)'}",
                 f"config voltage: {json.dumps({k: cfg[k] for k in VOLT_KEYS if cfg.get(k) not in (None, {}, [])}) or 'defaults'}"]
             return "\n".join(lines)
         d = tval.get("data", {})
