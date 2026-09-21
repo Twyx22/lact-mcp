@@ -2,6 +2,35 @@
 
 Every release has a codename. Codenames are winds.
 
+## v0.3.1 — Harmattan (2026-09-21)
+
+The dry wind that sweeps the dust off the gauges.
+
+**Fixed**
+- `daemon_query` on `set_gpu_config` (and every other `set_*` write) is
+  auto-confirmed again: the command was missing from the hand-maintained
+  confirm list, so the write was staged and silently reverted ~5 s later —
+  the exact opposite of what the tool advertised. The list is now a rule
+  (`set_*` + `batch_set_clocks_value`), not a list to forget.
+- `daemon_query` accepts an integer gpu id (`{"id": 1}`), not only a string:
+  a natural JSON number used to die on `invalid type: integer, expected a
+  borrowed string`.
+- `voltage get` reports the **applied** VF offsets (`nvidia_gpu_vf_curve`).
+  It used to dump the distinct `freq_offset` values of the driver's stock
+  curve (`freq - base_freq`), so a default config printed a `-270..+105 MHz`
+  spread and looked undervolted while nothing was set.
+- A hung `lact cli` now returns a normal `isError` tool result instead of a
+  raw JSON-RPC `-32603`.
+- Module docstring lists the 11 tools again (`voltage` was missing).
+
+**Verified live** (RTX 3080 + Radeon iGPU, lact 0.10.1)
+- Idempotent `set_gpu_config` written through `daemon_query` stays after the
+  5 s revert window; `{"id": 1}` resolves; `voltage get` says
+  `vf offsets applied: none (stock curve)`; a forced 15 s `lact` timeout
+  comes back as a tool error.
+- `--test` self-check green on 2 GPUs, CI smoke test (11 tools) green.
+- No GPU left modified: power cap 320 W, fan curve untouched.
+
 ## v0.3.0 — Mistral (2026-09-17)
 
 The strong north wind that bends the voltage curve.
@@ -27,13 +56,10 @@ The strong north wind that bends the voltage curve.
 - 8 error paths clean: bad index, out-of-range offset/boost, AMD-only keys
   on NVIDIA, NVIDIA-only keys on AMD, locked iGPU, empty set, default GPU.
 
-## Unreleased
-
-**Fixed**
+**Also shipped in this tag** (shipped as this section's fixes, listed here
+for honesty — they were tagged with v0.3.0, not left unreleased)
 - `clocks reset` on already-default clocks returns "already at defaults"
   instead of lactd's `Invalid argument (os error 22)`.
-- `daemon_query` GPU-config writes (`set_*`) now auto-confirm — no more
-  silent 5 s revert when forgetting `confirm_pending_config`.
 - `power get`, `gpu_info` and `gpu_stats` accept PCI fragments
   (`0000:01:00.0`) like every other tool (`lact cli --gpu-id` only takes
   index or full ID; now resolved first).
