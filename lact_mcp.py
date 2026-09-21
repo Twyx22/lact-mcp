@@ -512,7 +512,7 @@ def t_daemon_query(a):
     if not a.get("command"):
         raise ValueError("missing 'command' (e.g. device_stats, list_devices)")
     args = a.get("args")
-    if isinstance(args, dict) and isinstance(args.get("id"), str):
+    if isinstance(args, dict) and isinstance(args.get("id"), (str, int)):
         args = {**args, "id": resolve_id(args["id"])}  # index/PCI accepted
     r = sock_query(a["command"], args)
     if r.get("status") != "ok":
