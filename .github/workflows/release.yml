@@ -2,6 +2,11 @@ name: release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish"
+        required: false
 permissions:
   contents: write
 jobs:
@@ -9,13 +14,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - run: python3 -m py_compile lact_mcp.py && python3 lact_mcp.py --version
       - name: Pick release body (per-tag notes, CHANGELOG fallback)
         run: |
-          f="release-notes/${{ github.ref_name }}.md"
+          TAG="${{ inputs.tag || github.ref_name }}"
+          f="release-notes/${TAG}.md"
           [ -f "$f" ] || f=CHANGELOG.md
           cp "$f" release-body.md
       - uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           body_path: release-body.md
           files: lact_mcp.py
