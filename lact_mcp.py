@@ -115,6 +115,18 @@ def t_power(a):
     raise ValueError("action must be get|set")
 
 
+def _sole_nvidia():
+    """Full LACT id of the only NVIDIA GPU (PenguinBurner is NVIDIA-only)."""
+    devs = (sock_query("list_devices")["data"]) or []
+    nv = [d["id"] for d in devs if "id" in d and
+          sock_query("device_clocks_info", {"id": d["id"]}).
+          get("data", {}).get("table", {}).get("type") == "nvidia"]
+    if len(nv) == 1:
+        return nv[0]
+    raise ValueError(f"need explicit gpu_id ({len(nv)} NVIDIA GPUs,"
+                     " see list_gpus)")
+
+
 def t_profiles(a):
     action = a.get("action", "list")
     if action in ("list", "get"):
@@ -146,7 +158,55 @@ def t_profiles(a):
         if r.get("status") != "ok":
             raise RuntimeError(_daemon_err(r))
         return f"profile {name!r} deleted"
-    raise ValueError("action must be list|get|set|create|delete")
+    if action == "import":
+        path = a.get("file")
+        if not path:
+            raise ValueError("profiles import requires 'file'"
+                             " (PenguinBurner auto-uv JSON)")
+        try:
+            with open(path) as f:
+                doc = json.load(f)
+        except OSError as e:
+            raise ValueError(f"cannot read {path!r}: {e}")
+        vf = {}
+        for pt in doc.get("plan") or []:
+            try:
+                idx, off = int(pt["index"]), int(pt["new_offset_mhz"])
+            except (KeyError, TypeError, ValueError):
+                raise ValueError(f"bad plan entry {pt!r}"
+                                 " (need index/new_offset_mhz)")
+            if not 0 <= idx <= 126:
+                raise ValueError(f"vf index {idx} outside 0..126")
+            if not -1000 <= off <= 1000:
+                raise ValueError(f"vf offset {off} at index {idx}"
+                                 " outside -1000..1000")
+            if off:
+                vf[str(idx)] = {"clockspeed_offset": off}
+        if not vf:
+            raise ValueError(f"no nonzero VF offsets in {path!r}")
+        gid = resolve_id(a["gpu_id"]) if a.get("gpu_id") else _sole_nvidia()
+        gpus = {gid: {"nvidia_gpu_vf_curve": vf}}
+        cap = doc.get("power_limit_w") or doc.get("configured_power_limit_w")
+        if cap is not None:
+            cap = float(cap)
+            if cap <= 0:
+                raise ValueError(f"bad power_limit_w {cap!r}")
+            gpus[gid]["power_cap"] = cap
+        name = (a.get("name") or doc.get("profile_id") or
+                os.path.splitext(os.path.basename(path))[0])
+        r = sock_query("create_profile",
+                       {"name": name, "base": {"provided": {"gpus": gpus}}})
+        if r.get("status") != "ok":
+            raise RuntimeError(_daemon_err(r))
+        msg = (f"profile {name!r} imported from {os.path.basename(path)}"
+               f" ({len(vf)} VF offsets" +
+               (f", cap {cap:g}W" if cap is not None else "") +
+               ", live untouched)")
+        if a.get("apply"):
+            cli("profile", "set", name)
+            msg += " + applied (now current)"
+        return msg
+    raise ValueError("action must be list|get|set|create|delete|import")
 
 
 def t_auto_switch(a):
@@ -565,11 +625,13 @@ TOOLS = [
          "action": {"type": "string", "enum": ["get", "set"], "default": "get"},
          "watts": {"type": "number", "description": "Required for set."}},
       "required": ["action"]}, t_power),
-    ("profiles", "List, show current, apply, create (clone), or delete a LACT profile.",
+    ("profiles", "List, show current, apply, create (clone), delete, or import (PenguinBurner auto-uv JSON) a LACT profile.",
      {"type": "object", "properties": {
-         "action": {"type": "string", "enum": ["list", "get", "set", "create", "delete"], "default": "list"},
-         "name": {"type": "string", "description": "Profile name (required for set/create/delete)."},
-         "from": {"type": "string", "description": "Clone source for create (omit = empty profile)."}}}, t_profiles),
+         "action": {"type": "string", "enum": ["list", "get", "set", "create", "delete", "import"], "default": "list"},
+         "name": {"type": "string", "description": "Profile name (required for set/create/delete; default for import = file profile_id)."},
+         "from": {"type": "string", "description": "Clone source for create (omit = empty profile)."},
+         "file": {"type": "string", "description": "PenguinBurner auto-uv JSON path (required for import)."},
+         "apply": {"type": "boolean", "description": "Import: set as current after creating (default false = live untouched)."}}}, t_profiles),
     ("auto_switch", "Get/enable/disable automatic profile switching.",
      {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["get", "enable", "disable"], "default": "get"}}}, t_auto_switch),
@@ -711,6 +773,35 @@ def self_test():
         raise AssertionError("deleting the current profile must be refused")
     except ValueError:
         pass
+    try:
+        t_profiles({"action": "import", "file": "/nonexistent.json"})
+        raise AssertionError("import of a missing file must be refused")
+    except ValueError:
+        pass
+    try:
+        gid = _sole_nvidia()
+    except ValueError:
+        gid = None
+    if gid is not None:  # import must not touch the live config
+        doc = {"profile_id": "_selftest_import", "power_limit_w": 300,
+               "plan": [{"index": i, "new_offset_mhz": 10 if i == 60 else 0}
+                        for i in range(127)]}
+        tmp = "/tmp/_selftest_penguin.json"
+        with open(tmp, "w") as f:
+            json.dump(doc, f)
+        before = sock_query("get_gpu_config", {"id": gid})["data"]
+        try:
+            out = t_profiles({"action": "import", "file": tmp,
+                              "gpu_id": gid})
+            assert "imported" in out and "live untouched" in out, out
+            got = sock_query("get_profile",
+                             {"name": "_selftest_import"})["data"]["gpus"][gid]
+            assert got.get("nvidia_gpu_vf_curve") == {"60": {"clockspeed_offset": 10}}, got
+            assert got.get("power_cap") == 300, got
+            assert sock_query("get_gpu_config", {"id": gid})["data"] == before, "import touched live config"
+        finally:
+            os.remove(tmp)
+            t_profiles({"action": "delete", "name": "_selftest_import"})
     print(f"lact-mcp {VERSION} self-test OK ({n} gpu(s))")
 
 
