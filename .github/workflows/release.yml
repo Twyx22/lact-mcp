@@ -10,7 +10,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: python3 -m py_compile lact_mcp.py && python3 lact_mcp.py --version
+      - name: Pick release body (per-tag notes, CHANGELOG fallback)
+        run: |
+          f="release-notes/${{ github.ref_name }}.md"
+          [ -f "$f" ] || f=CHANGELOG.md
+          cp "$f" release-body.md
       - uses: softprops/action-gh-release@v3
         with:
-          generate_release_notes: true
+          body_path: release-body.md
           files: lact_mcp.py
