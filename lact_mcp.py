@@ -124,7 +124,29 @@ def t_profiles(a):
         if not name:
             raise ValueError("profiles set requires 'name'")
         return cli("profile", "set", name)
-    raise ValueError("action must be list|get|set")
+    if action == "create":
+        name = a.get("name")
+        if not name:
+            raise ValueError("profiles create requires 'name'")
+        src = a.get("from")
+        base = {"profile": src} if src else "empty"
+        r = sock_query("create_profile", {"name": name, "base": base})
+        if r.get("status") != "ok":
+            raise RuntimeError(_daemon_err(r))
+        return f"profile {name!r} created" + \
+            (f" (cloned from {src!r})" if src else " (empty)")
+    if action == "delete":
+        name = a.get("name")
+        if not name:
+            raise ValueError("profiles delete requires 'name'")
+        if name == cli("profile", "get").strip():
+            raise ValueError(f"refusing to delete current profile {name!r}"
+                             " (set another one first)")
+        r = sock_query("delete_profile", {"name": name})
+        if r.get("status") != "ok":
+            raise RuntimeError(_daemon_err(r))
+        return f"profile {name!r} deleted"
+    raise ValueError("action must be list|get|set|create|delete")
 
 
 def t_auto_switch(a):
@@ -543,10 +565,11 @@ TOOLS = [
          "action": {"type": "string", "enum": ["get", "set"], "default": "get"},
          "watts": {"type": "number", "description": "Required for set."}},
       "required": ["action"]}, t_power),
-    ("profiles", "List, show current, or apply a LACT profile.",
+    ("profiles", "List, show current, apply, create (clone), or delete a LACT profile.",
      {"type": "object", "properties": {
-         "action": {"type": "string", "enum": ["list", "get", "set"], "default": "list"},
-         "name": {"type": "string", "description": "Profile name (required for set)."}}}, t_profiles),
+         "action": {"type": "string", "enum": ["list", "get", "set", "create", "delete"], "default": "list"},
+         "name": {"type": "string", "description": "Profile name (required for set/create/delete)."},
+         "from": {"type": "string", "description": "Clone source for create (omit = empty profile)."}}}, t_profiles),
     ("auto_switch", "Get/enable/disable automatic profile switching.",
      {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["get", "enable", "disable"], "default": "get"}}}, t_auto_switch),
@@ -673,6 +696,21 @@ def self_test():
     # power cap may not exist (e.g. iGPU): last GPU usually has one, else skip
     if n > 1:
         assert "W" in t_power({"action": "get", "gpu_id": "1"}), "power get failed"
+    assert "created" in t_profiles({"action": "create", "name": "_selftest_tmp"}), "profiles create failed"
+    try:
+        assert "cloned" in t_profiles({"action": "create", "name": "_selftest_clone", "from": "_selftest_tmp"}), "profiles clone failed"
+    finally:
+        for tmp in ("_selftest_clone", "_selftest_tmp"):
+            try:
+                t_profiles({"action": "delete", "name": tmp})
+            except (ValueError, RuntimeError):
+                pass
+    assert "_selftest" not in t_profiles({"action": "list"}), "self-test leftovers"
+    try:
+        t_profiles({"action": "delete", "name": t_profiles({"action": "get"}).strip()})
+        raise AssertionError("deleting the current profile must be refused")
+    except ValueError:
+        pass
     print(f"lact-mcp {VERSION} self-test OK ({n} gpu(s))")
 
 
