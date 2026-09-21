@@ -626,7 +626,8 @@ def handle(req):
         try:
             return {"jsonrpc": "2.0", "id": rid,
                     "result": ok(fn(p.get("arguments") or {}))}
-        except (ValueError, RuntimeError, KeyError, TypeError) as e:
+        except (ValueError, RuntimeError, KeyError, TypeError,
+                subprocess.TimeoutExpired) as e:
             return {"jsonrpc": "2.0", "id": rid, "result": err(str(e))}
     if rid is None:
         return None
